@@ -1,0 +1,11 @@
+rclone/
+rclone.conf
+.env
+*.key
+*.pem
+*.token
+*.zip
+__pycache__/
+*.pyc
+node_modules/
+.git-credentials

@@ -1,0 +1,4 @@
+#!/command/with-contenv sh
+# uvicorn — API FastAPI en local (nginx proxie /api/ et /ws/ vers 127.0.0.1:8000).
+cd /app
+exec uvicorn main:app --host 127.0.0.1 --port 8000 --log-level warning

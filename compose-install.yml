@@ -1,0 +1,132 @@
+name: zimacompare-v10
+services:
+  zimacompare:
+    container_name: zimacompare-v10
+    image: ghcr.io/musitoul-blip/zimacompare-aio:v10
+    restart: unless-stopped
+    cpu_shares: 90
+    privileged: true
+    devices:
+      - /dev/fuse
+    stop_grace_period: 30s
+    ports:
+      - target: 8511
+        published: "8511"
+        protocol: tcp
+    environment:
+      - TZ=Europe/Paris
+      - PUID=1000
+      - PGID=1000
+      - RCLONE_RC_USER=zima
+      - RCLONE_RC_PASS=${RCLONE_RC_PASS}
+      - RCLONE_RC_URL=http://127.0.0.1:5572
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8511/api/health > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    volumes:
+      - type: bind
+        source: /DATA/AppData/zimacompare-v10/data
+        target: /app_data
+      - type: bind
+        source: /DATA/AppData/zimacompare-v10/rclone
+        target: /config/rclone
+      - type: bind
+        source: /media/HDD-Storage1
+        target: /disks/HDD-Storage1
+      - type: bind
+        source: /media/HDD-Storage2
+        target: /disks/HDD-Storage2
+      - type: bind
+        source: /media/SSD_NAS
+        target: /disks/SSD_NAS
+      - type: bind
+        source: /media/Sauvegarde
+        target: /disks/Sauvegarde
+      - type: bind
+        source: /media/Nouveau nom
+        target: /disks/Nouveau_nom
+      - type: bind
+        source: /media/192.168.1.254/Disque 1
+        target: /network/NAS_Disque1
+      - type: bind
+        source: /media/192.168.1.254/Music
+        target: /network/NAS_Music
+      - type: bind
+        source: /media/192.168.1.254/sondage
+        target: /network/NAS_Sondage
+      - type: bind
+        source: /media/192.168.1.254/cam
+        target: /network/NAS_Cam
+    x-casaos:
+      envs:
+        - container: TZ
+          description:
+            en_us: Timezone (e.g. Europe/Paris)
+        - container: RCLONE_RC_USER
+          description:
+            en_us: rclone remote-control username
+        - container: RCLONE_RC_PASS
+          description:
+            en_us: rclone remote-control password
+      ports:
+        - container: "8511"
+          description:
+            en_us: ZimaCompare Web UI
+      volumes:
+        - container: /app_data
+          description:
+            en_us: Runtime data (state, logs, cache)
+        - container: /config/rclone
+          description:
+            en_us: rclone config (rclone.conf) and VFS cache
+        - container: /disks/HDD-Storage1
+          description:
+            en_us: Local disk HDD-Storage1
+        - container: /disks/HDD-Storage2
+          description:
+            en_us: Local disk HDD-Storage2
+        - container: /disks/SSD_NAS
+          description:
+            en_us: Local disk SSD_NAS
+        - container: /disks/Sauvegarde
+          description:
+            en_us: Local disk Sauvegarde
+        - container: /disks/Nouveau_nom
+          description:
+            en_us: Local disk Nouveau nom
+        - container: /network/NAS_Disque1
+          description:
+            en_us: NAS share Disque 1
+        - container: /network/NAS_Music
+          description:
+            en_us: NAS share Music
+        - container: /network/NAS_Sondage
+          description:
+            en_us: NAS share sondage
+        - container: /network/NAS_Cam
+          description:
+            en_us: NAS share cam
+
+x-casaos:
+  architectures:
+    - amd64
+  main: zimacompare
+  author: musitoul-blip
+  category: File Sync
+  description:
+    en_us: Scan, compare and sync files between local disks, NAS and pCloud. All-in-one image (S6-Overlay) — single container, one-click install. Setup wizard included, no SSH required.
+  tagline:
+    en_us: File sync with pCloud — single-container AIO, zero SSH setup
+  title:
+    custom: ""
+    en_us: ZimaCompare&Tag v10
+  index: /
+  port_map: "8511"
+  scheme: http
+  hostname: ""
+  is_uncontrolled: false
+  store_app_id: zimacompare-v10
+  icon: https://filedn.eu/lXD7ErB2q6Sp19LoIrttSsj/ZimaCompare%26Tag/icon.png

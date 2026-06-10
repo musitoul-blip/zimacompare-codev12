@@ -1,0 +1,221 @@
+"""backend/tagscan.py - lanceur du scan-tag (v9).
+Reutilise BackgroundScanner (porte verbatim dans tagaudit/) pour produire
+master_scan.csv. Progression via app_state. Supporte selection de formats,
+filtre par nom de dossier, et limite de fichiers. Un seul job a la fois.
+"""
+import os
+import sys
+import time
+import threading
+from pathlib import Path
+
+if "/app/tagaudit" not in sys.path:
+    sys.path.insert(0, "/app/tagaudit")
+
+from config import AppState, get_state, update_state
+
+TAG_SOURCE_DEFAULT = "/disks/HDD-Storage1/Media/GoogleMusic"
+
+_scanner = None
+_lock = threading.Lock()
+_meta = {"started_at": 0.0, "ended_at": 0.0}
+_dir_cache = {"source": None, "built_at": 0.0, "dirs": []}
+
+
+def list_source_dirs(source=None, refresh=False):
+    """Index des sous-dossiers immediats de la source + comptage par format.
+    Mis en cache (par source). Alimente le filtre interactif cote UI."""
+    source = source or TAG_SOURCE_DEFAULT
+    if not refresh and _dir_cache["source"] == source and _dir_cache["dirs"]:
+        return _dir_cache
+    dirs = []
+    try:
+        entries = sorted((e for e in os.scandir(source) if e.is_dir()),
+                         key=lambda e: e.name.lower())
+    except OSError:
+        entries = []
+    for e in entries:
+        c = {"mp3": 0, "flac": 0, "m4a": 0}
+        for root, _d, files in os.walk(e.path):
+            for fn in files:
+                ext = os.path.splitext(fn)[1].lower()
+                if ext == ".mp3":
+                    c["mp3"] += 1
+                elif ext == ".flac":
+                    c["flac"] += 1
+                elif ext == ".m4a":
+                    c["m4a"] += 1
+        tot = c["mp3"] + c["flac"] + c["m4a"]
+        if tot:
+            dirs.append({"name": e.name, "mp3": c["mp3"], "flac": c["flac"],
+                         "m4a": c["m4a"], "total": tot})
+    _dir_cache.update(source=source, built_at=time.time(), dirs=dirs)
+    return _dir_cache
+
+
+def dirs_payload(source=None, refresh=False):
+    idx = list_source_dirs(source, refresh)
+    dirs = idx["dirs"]
+    by = {"mp3": sum(d["mp3"] for d in dirs),
+          "flac": sum(d["flac"] for d in dirs),
+          "m4a": sum(d["m4a"] for d in dirs)}
+    return {"source": idx["source"], "count": len(dirs),
+            "total_files": by["mp3"] + by["flac"] + by["m4a"],
+            "by_format": by, "built_at": idx["built_at"], "dirs": dirs}
+
+
+def _exts_from(formats):
+    if not formats:
+        return None
+    out = set()
+    for f in formats:
+        f = str(f).lower().lstrip(".")
+        if f in ("mp3", "flac", "m4a"):
+            out.add("." + f)
+    return out or None
+
+
+def _run(scan_paths, exts, limit):
+    global _scanner
+    try:
+        from engine.scanner import BackgroundScanner
+        sc = BackgroundScanner(scan_paths, formats=exts, file_limit=limit)
+        with _lock:
+            _scanner = sc
+        sc.start()
+    except Exception as e:
+        update_state(app_state=AppState.ERROR, error="scan-tag: %s" % e)
+    finally:
+        _meta["ended_at"] = time.time()
+        with _lock:
+            _scanner = None
+
+
+def start_tag_scan(source=None, formats=None, name_filter=None, limit=None):
+    """Demarre un scan-tag. Retourne True, ou 'busy' / 'nomatch'."""
+    source = source or TAG_SOURCE_DEFAULT
+    state = get_state()
+    if state["app_state"] not in (AppState.IDLE, AppState.ERROR):
+        return "busy"
+    nf = (name_filter or "").strip().lower()
+    if nf:
+        idx = list_source_dirs(source)
+        sel = [os.path.join(source, d["name"]) for d in idx["dirs"]
+               if nf in d["name"].lower()]
+        if not sel:
+            return "nomatch"
+        scan_paths = [Path(p) for p in sel]
+    else:
+        scan_paths = [Path(source)]
+    exts = _exts_from(formats)
+    try:
+        lim = int(limit) if limit else None
+        if lim is not None and lim <= 0:
+            lim = None
+    except (TypeError, ValueError):
+        lim = None
+    _meta["started_at"] = time.time()
+    _meta["ended_at"] = 0.0
+    update_state(app_state=AppState.SCANNING, method="tagscan", source=source,
+                 target="", error="", scan_done=False, progress=0, processed=0,
+                 total=0, current_file="Pre-scan...", fps=0, eta_seconds=0,
+                 new_count=0, different_count=0, deleted_count=0, identical_count=0)
+    threading.Thread(target=_run, args=(scan_paths, exts, lim), daemon=True).start()
+    return True
+
+
+def stop_tag_scan():
+    with _lock:
+        sc = _scanner
+    if sc is not None:
+        sc.stop()
+        return True
+    return False
+
+
+def _master_csv_path():
+    p = Path("/app_data/tagaudit/data/master_scan.csv")
+    try:
+        if "/app/tagaudit" not in sys.path:
+            sys.path.insert(0, "/app/tagaudit")
+        from core import config as tagcfg
+        p = Path(tagcfg.master_csv_path)
+    except Exception:
+        pass
+    return p
+
+
+def tag_result_info():
+    p = _master_csv_path()
+    if not p.exists():
+        return {"exists": False, "rows": 0, "path": str(p)}
+    rows = 0
+    by = {"mp3": 0, "flac": 0, "m4a": 0, "autre": 0}
+    try:
+        import csv as _csv
+        with open(p, "r", encoding="utf-8", newline="") as f:
+            rd = _csv.reader(f, delimiter=";")
+            header = next(rd, [])
+            ix = header.index("extension") if "extension" in header else 2
+            for row in rd:
+                rows += 1
+                ext = row[ix].lower() if len(row) > ix else ""
+                if ext in by:
+                    by[ext] += 1
+                else:
+                    by["autre"] += 1
+    except Exception:
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                rows = max(0, sum(1 for _ in f) - 1)
+        except Exception:
+            pass
+    dur = 0.0
+    if _meta["ended_at"] and _meta["started_at"] and _meta["ended_at"] > _meta["started_at"]:
+        dur = round(_meta["ended_at"] - _meta["started_at"], 1)
+    fps = round(rows / dur, 1) if dur > 0 else 0
+    return {"exists": True, "rows": rows, "path": str(p),
+            "mtime": p.stat().st_mtime, "by_format": by,
+            "duration_seconds": dur, "fps_avg": fps}
+
+
+def tag_progress():
+    from config import get_state
+    st = get_state()
+    fmt = {}
+    try:
+        from core import state_manager as _sm
+        fmt = _sm.fmt_counts()
+    except Exception:
+        fmt = {}
+    return {"app_state": st.get("app_state"), "method": st.get("method"),
+            "processed": st.get("processed", 0), "total": st.get("total", 0),
+            "progress": st.get("progress", 0), "fps": st.get("fps", 0),
+            "eta_seconds": st.get("eta_seconds", 0),
+            "current_file": st.get("current_file", ""), "fmt": fmt}
+
+
+def build_tag_export():
+    """Genere l'Excel d'audit ZimaTAG depuis master_scan.csv (excel_export 2.5.1,
+    verbatim). Retourne le chemin du .xlsx. Bloque si une operation est en cours."""
+    state = get_state()
+    if state["app_state"] not in (AppState.IDLE, AppState.ERROR):
+        raise RuntimeError("Operation en cours -- attendez la fin du scan-tag")
+    if "/app/tagaudit" not in sys.path:
+        sys.path.insert(0, "/app/tagaudit")
+    from export import export_to_excel
+    from core import config as tagcfg
+    import shutil
+    src = export_to_excel()
+    data_dir = str(tagcfg.DATA_DIR)
+    dest = os.path.join(data_dir, os.path.basename(src))
+    try:
+        if os.path.abspath(src) != os.path.abspath(dest):
+            shutil.copy2(src, dest)
+            sub = os.path.dirname(src)
+            if (os.path.abspath(sub) != os.path.abspath(data_dir)
+                    and os.path.basename(sub).startswith("ZimaTAG_Audit_")):
+                shutil.rmtree(sub, ignore_errors=True)
+    except Exception:
+        dest = src
+    return str(dest)

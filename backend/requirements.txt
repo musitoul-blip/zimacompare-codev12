@@ -1,0 +1,12 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+websockets>=13.0
+xxhash>=3.5.0
+psutil>=6.1.0
+xlsxwriter==3.2.9
+requests>=2.32.0
+aiofiles>=24.1.0
+pathspec>=0.12.0
+python-multipart>=0.0.9
+pandas==3.0.3
+mutagen==1.47.0

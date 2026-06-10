@@ -1,0 +1,119 @@
+import { useState, useEffect, useCallback } from 'react'
+import { api } from './api.js'
+import SetupWizard from './components/SetupWizard.jsx'
+import TabScanSync from './components/TabScanSync.jsx'
+import TabHistory  from './components/TabHistory.jsx'
+import TabCleanup  from './components/TabCleanup.jsx'
+import TabCloud    from './components/TabCloud.jsx'
+import TabSystem   from './components/TabSystem.jsx'
+import TabInfo     from './components/TabInfo.jsx'
+import TabZimatag from './components/TabZimatag.jsx'
+
+const STATE_COLOR = {
+  IDLE:      '#64748b',
+  SCANNING:  '#4f8ef7',
+  COMPARING: '#7c3aed',
+  SYNCING:   '#22c55e',
+  VERIFYING: '#06b6d4',
+  ERROR:     '#ef4444',
+}
+
+export default function App() {
+  const [tab,        setTab]        = useState('scan')
+  const [status,     setStatus]     = useState(null)
+  const [error,      setError]      = useState(null)
+  const [setupDone,  setSetupDone]  = useState(false)
+
+  const poll = useCallback(async () => {
+    try {
+      const s = await api.status()
+      setStatus(s)
+      setError(null)
+      // Si le setup était nécessaire et est maintenant terminé
+      if (!s.setup_needed) {
+        setSetupDone(true)
+      }
+    } catch (e) {
+      setError('Backend inaccessible')
+    }
+  }, [])
+
+  useEffect(() => {
+    poll()
+    const id = setInterval(poll, 2000)
+    return () => clearInterval(id)
+  }, [poll])
+
+  // Afficher le wizard si setup_needed et non encore complété
+  const needsSetup = status?.setup_needed === true && !setupDone
+
+  if (needsSetup) {
+    return (
+      <SetupWizard onComplete={() => {
+        setSetupDone(true)
+        poll() // Rafraîchir le statut
+      }} />
+    )
+  }
+
+  const isActive = status?.app_state && !['IDLE','ERROR'].includes(status.app_state)
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', minHeight:'100vh' }}>
+      <div style={{ position:'sticky', top:0, zIndex:50 }}>
+      <header style={{
+        background: 'var(--surface)', borderBottom: '1px solid var(--border)',
+        padding: '0 24px', display:'flex', alignItems:'center', gap:16, height:52
+      }}>
+        <span style={{ fontSize:20 }}>🔄</span>
+        <span style={{ fontWeight:700, fontSize:16, letterSpacing:'.02em' }}>ZimaCompare&Tag</span>
+        <span style={{ color:'var(--muted)', fontSize:12 }}>v9</span>
+        <div style={{ flex:1 }} />
+        {error ? (
+          <span className="badge badge-red">⚠ {error}</span>
+        ) : status ? (
+          <span className="badge" style={{
+            background: (STATE_COLOR[status.app_state] || '#64748b') + '22',
+            color: STATE_COLOR[status.app_state] || '#64748b',
+          }}>
+            {isActive && '⟳ '}{status.app_state}
+          </span>
+        ) : null}
+      </header>
+
+      <nav style={{
+        background:'var(--surface)', borderBottom:'1px solid var(--border)',
+        display:'flex', padding:'0 24px', flexWrap:'wrap',
+      }}>
+        {[
+          { id:'scan',    label:'🔍 Scan & Sync' },
+          { id:'zimatag', label:'🏷 ZimaTAG' },
+          { id:'cleanup', label:'🧹 Nettoyage .db' },
+          { id:'cloud',   label:'☁ Cloud'        },
+          { id:'history', label:'📋 Historique'  },
+          { id:'system',  label:'⚙ Système'     },
+          { id:'info',    label:'📊 Information' },
+        ].map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{
+            background:'none', border:'none', color: tab===t.id ? 'var(--accent)' : 'var(--muted)',
+            borderBottom: tab===t.id ? '2px solid var(--accent)' : '2px solid transparent',
+            padding:'12px 16px', borderRadius:0, fontSize:13, fontWeight: tab===t.id ? 600 : 400,
+          }}>
+            {t.label}
+          </button>
+        ))}
+      </nav>
+      </div>
+
+      <main style={{ flex:1, padding:24, maxWidth:1100, width:'100%', margin:'0 auto' }}>
+        {tab === 'scan'    && <TabScanSync status={status} />}
+        {tab === 'zimatag' && <TabZimatag status={status} />}
+        {tab === 'cleanup' && <TabCleanup  status={status} />}
+        {tab === 'cloud'   && <TabCloud    status={status} />}
+        {tab === 'history' && <TabHistory />}
+        {tab === 'system'  && <TabSystem />}
+        {tab === 'info'    && <TabInfo />}
+      </main>
+    </div>
+  )
+}
