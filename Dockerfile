@@ -82,5 +82,5 @@ RUN chmod +x /etc/s6-overlay/s6-rc.d/rclone/run \
              /etc/s6-overlay/s6-rc.d/uvicorn/run \
              /etc/s6-overlay/s6-rc.d/nginx/run
 
-EXPOSE 8512
+EXPOSE 8513
 ENTRYPOINT ["/init"]
